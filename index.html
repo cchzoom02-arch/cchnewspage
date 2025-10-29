@@ -325,8 +325,7 @@ async function saveData(action) {
     const response = await fetch(SCRIPT_URL, {
       method: 'POST',
       redirect: 'follow',
-      // *** 關鍵修正：移除 Content-Type 標頭，避免 OPTIONS 預檢和 405 錯誤 ***
-      // 瀏覽器將視為簡單請求
+      // *** 關鍵修正：移除 Content-Type 標頭，避免 OPTIONS 預檢和 405 錯誤 (此處為註釋，保留原有寫法) ***
       body: JSON.stringify({
         action: action, 
         password: password,
@@ -490,9 +489,13 @@ function renderNews() {
     }
     
     card.className = cardClass;
+    
+    // *** 關鍵修正點：在 onclick 傳遞 news.id 時，加上單引號，強制傳遞字串字面值 ***
     card.innerHTML = `
-      <button class="edit-btn" onclick="editNews(${news.id})">編輯</button>
+      <button class="edit-btn" onclick="editNews('${news.id}')">編輯</button>
       <div class="date">
+    // ********************************************************************************
+    
         <div class="label">預計發布</div>
         <div class="day">${dateStr}</div>
         <div class="weekday">禮拜${dayOfWeek}</div>
@@ -544,18 +547,19 @@ function login() {
 function editNews(id) {
   if (!isAdminMode) return;
   
-  // *** 核心修正點：將傳入的 id 轉為字串，確保與 newsData 中的字串 ID 進行嚴格比較 (===) ***
+  // *** 核心修正點（保留）：將傳入的 id 轉為字串，確保與 newsData 中的字串 ID 進行嚴格比較 (===) ***
+  // 即使 HTML 已經傳遞字串，這層保護仍應保留。
   const news = newsData.find(n => n.id === String(id)); 
   // ***********************************************************************************
   
   if (!news) {
     // 增加一個除錯通知，以防 ID 真的找不到
     console.error(`找不到 ID 為 ${id} 的新聞資料！`);
-    showNotification('❌ 編輯失敗：找不到這則新聞的資料。', 'error');
+    showNotification(`❌ 編輯失敗：找不到 ID ${id} 的新聞資料。`, 'error');
     return;
   }
   
-  editingId = news.id; // 使用 news.id 確保是字串類型
+  editingId = news.id; // 確保使用 news.id 確保是字串類型
   document.getElementById('editTitle').textContent = '📝 編輯新聞';
   document.getElementById('editDate').value = news.date;
   document.getElementById('editNewsTitle').value = news.title;
@@ -721,6 +725,7 @@ function updateAdminNewsList() {
       background: ${bgColor};
     `;
     
+    // *** 關鍵修正點：在 onclick 傳遞 news.id 時，加上單引號，強制傳遞字串字面值 ***
     newsItem.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px">
         <div style="flex: 1">
@@ -736,13 +741,14 @@ function updateAdminNewsList() {
             平面：${graphic ? graphic.name : '未指派'}
           </div>
         </div>
-        <button onclick="editNews(${news.id})" style="
+        <button onclick="editNews('${news.id}')" style="
           background: var(--green); color: white; border: none; padding: 6px 12px;
           border-radius: 4px; cursor: pointer; font-size: 12px; white-space: nowrap;
         ">編輯</button>
       </div>
     `;
-    
+    // ********************************************************************************
+
     container.appendChild(newsItem);
   });
 }
