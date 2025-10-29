@@ -510,7 +510,7 @@ function renderNews() {
   });
 }
 
-// 登入功能 (修正點在這裡)
+// 登入功能
 function showLoginModal() {
   if (isAdminMode) {
     showStaffModal();
@@ -529,9 +529,8 @@ function login() {
     closeModal('loginModal');
     document.getElementById('adminPassword').value = '';
     
-    // *** 修正重點：成功登入後，重新渲染新聞列表 ***
+    // 成功登入後，重新渲染新聞列表 (確保編輯按鈕顯示)
     renderNews(); 
-    // **********************************************
 
     showNotification('✅ 登入成功！現在可以編輯新聞內容了。', 'success');
   } else {
@@ -545,10 +544,18 @@ function login() {
 function editNews(id) {
   if (!isAdminMode) return;
   
-  const news = newsData.find(n => n.id === id);
-  if (!news) return;
+  // *** 核心修正點：將傳入的 id 轉為字串，確保與 newsData 中的字串 ID 進行嚴格比較 (===) ***
+  const news = newsData.find(n => n.id === String(id)); 
+  // ***********************************************************************************
   
-  editingId = id;
+  if (!news) {
+    // 增加一個除錯通知，以防 ID 真的找不到
+    console.error(`找不到 ID 為 ${id} 的新聞資料！`);
+    showNotification('❌ 編輯失敗：找不到這則新聞的資料。', 'error');
+    return;
+  }
+  
+  editingId = news.id; // 使用 news.id 確保是字串類型
   document.getElementById('editTitle').textContent = '📝 編輯新聞';
   document.getElementById('editDate').value = news.date;
   document.getElementById('editNewsTitle').value = news.title;
@@ -595,15 +602,16 @@ async function saveNews() {
   const originalNewsData = [...newsData]; 
 
   if (editingId) {
-    const index = newsData.findIndex(n => n.id === editingId);
+    // 確保這裡的查找也是用字串比較
+    const index = newsData.findIndex(n => n.id === String(editingId)); 
     newsData[index] = {
-      id: editingId,
+      id: String(editingId), // 確保儲存時 ID 仍為字串
       date, title, editor, video, graphic, accent
     };
   } else {
-    const newId = newsData.length > 0 ? Math.max(...newsData.map(n => parseInt(n.id))) + 1 : 1;
+    const newId = newsData.length > 0 ? Math.max(...newsData.map(n => parseInt(n.id) || 0)) + 1 : 1;
     newsData.push({
-      id: String(newId), 
+      id: String(newId), // 確保 ID 是字串
       date, title, editor, video, graphic, accent
     });
   }
@@ -626,7 +634,8 @@ function deleteNews() {
   }
   
   showConfirmDialog('⚠️ 確定要完成這則新聞嗎？完成後會移至歷史紀錄。', async () => {
-    const newsToDelete = newsData.find(n => n.id === editingId);
+    // 確保查找也是用字串比較
+    const newsToDelete = newsData.find(n => n.id === String(editingId));
     if (newsToDelete) {
       const originalNewsData = [...newsData]; 
       const originalHistoryData = [...historyData];
@@ -639,7 +648,7 @@ function deleteNews() {
         });
       }
       
-      newsData = newsData.filter(n => n.id !== editingId);
+      newsData = newsData.filter(n => n.id !== String(editingId)); // 確保過濾也是用字串比較
       
       const success = await saveData('saveNews');
       
@@ -1401,6 +1410,7 @@ function showConfirmDialog(message, onConfirm) {
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
   
+  // 全域函數處理確認和取消
   window.confirmAction = function() {
     overlay.remove();
     onConfirm();
@@ -1414,6 +1424,7 @@ function showConfirmDialog(message, onConfirm) {
     delete window.cancelAction;
   };
   
+  // 點擊外部關閉
   overlay.addEventListener('click', function(e) {
     if (e.target === overlay) {
       window.cancelAction();
