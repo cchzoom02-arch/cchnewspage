@@ -329,9 +329,10 @@ async function saveData(action) {
     const response = await fetch(SCRIPT_URL, {
       method: 'POST',
       redirect: 'follow',
-      headers: {
-        'Content-Type': 'application/json', // 必須是 application/json
-      },
+      // *** 這是關鍵修正：移除 Content-Type 標頭，避免 OPTIONS 預檢和 405 錯誤 ***
+      // headers: {
+      //   'Content-Type': 'application/json', // 必須是 application/json
+      // },
       body: JSON.stringify({
         action: action, // 告訴 Apps Script 要執行什麼動作
         password: password,
@@ -1427,5 +1428,3 @@ function showConfirmDialog(message, onConfirm) {
 </script>
 </body>
 </html>
-
-
