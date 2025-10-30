@@ -169,8 +169,6 @@
   }
 </style>
   <style>@view-transition { navigation: auto; }</style>
-  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
-  <script src="/_sdk/element_sdk.js" type="text/javascript"></script>
   <script src="https://cdn.tailwindcss.com" type="text/javascript"></script>
  </head>
  <body><button class="admin-btn" onclick="showLoginModal()">管理後台</button>
@@ -258,100 +256,164 @@
   </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script>
-// 初始資料
-let newsData = [
-  {
-    id: 1,
-    date: '2024-08-12',
-    title: '彰基攜手中興大學醫學院　傳承醫療使命、落實在地關懷',
-    editor: '109899',
-    video: '155125',
-    graphic: '180712',
-    accent: true
-  },
-  {
-    id: 2,
-    date: '2024-08-13',
-    title: '鹿港基督教醫院防颱速報　致贈科技沙包防範楊柳颱風侵襲',
-    editor: '53620',
-    video: '155125',
-    graphic: '72760',
-    accent: false
-  },
-  {
-    id: 3,
-    date: '2024-08-15',
-    title: '彰基嚴正聲明：利用病患牟利，醫界絕不容忍',
-    editor: '53620',
-    video: '108669',
-    graphic: '180712',
-    accent: false
-  }
-];
+// 【重要】將這裡替換成您在步驟二部署後複製的 Web 應用程式 URL
+// 範例：const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxMts432B19jaCgYXSn-UoK8ytUYVDxrkPbeRuGnzVUhjHH-HMS478cZhy4I8Ntx87j/exec"; 
 
-let staffData = {
-  editor: [
-    {id: '109899', name: '柯啟宏'},
-    {id: '53620', name: '曾鈺婷'}
-  ],
-  video: [
-    {id: '155125', name: '連哲浩'},
-    {id: '108669', name: '施月英'}
-  ],
-  graphic: [
-    {id: '180712', name: '吉洋・舒度'},
-    {id: '72760', name: '黃月芳'}
-  ]
-};
-
+// 初始變數 (現在由 Apps Script 載入資料)
+let newsData = []; 
+let staffData = {editor: [], video: [], graphic: []};
 let isAdminMode = false;
 let editingId = null;
 let autoDeleteTimer = null;
-let historyData = []; // 歷史紀錄資料
-let filteredHistory = []; // 搜尋結果
+let historyData = []; 
+let filteredHistory = []; 
 
-// 自動刪除過期新聞函數
-function autoDeleteExpiredNews() {
+// ------------------------------------------------------------------
+// 後端 API 相關函數
+// ------------------------------------------------------------------
+
+// 統一的 API 讀取函數
+async function loadData() {
+  try {
+    showNotification('🔄 正在從 Google Sheets 載入資料...', 'info');
+    const response = await fetch(SCRIPT_URL, {
+      method: 'GET',
+      redirect: 'follow', // 處理 Apps Script 的重新導向
+    });
+    
+    if (!response.ok) {
+        throw new Error(`網路錯誤: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+
+    if (data.error) {
+        // 捕捉 Apps Script 後端返回的錯誤
+        throw new Error(`Apps Script 錯誤: ${data.error}`);
+    }
+
+    newsData = data.newsData || [];
+    staffData = data.staffData || {editor: [], video: [], graphic: []};
+    historyData = data.historyData || [];
+    
+    // 首次載入完成後，執行一次渲染和刪除檢查
+    renderNews();
+    updateStaffSelects(); // 確保人員選單在載入後立即更新
+    
+    showNotification('✅ 資料載入成功！', 'success');
+
+  } catch (error) {
+    console.error('載入資料失敗:', error);
+    showNotification(`❌ 載入資料失敗：${error.message}，請檢查 Apps Script 部署與連線狀態。`, 'error');
+  }
+}
+
+// 統一的 API 寫入函數
+async function saveData(action) {
+  // **後端密碼驗證**：密碼在前端，必須透過 POST 傳給後端驗證。
+  const password = 'cch4156'; 
+  
+  // 確定要傳送的資料結構
+  let dataToSend = {};
+  if (action === 'saveNews' || action === 'restoreNews') {
+      dataToSend = { newsData, historyData };
+  } else if (action === 'deleteHistory') {
+      dataToSend = { historyData };
+  } else if (action === 'saveStaff') {
+      dataToSend = { staffData };
+  }
+  
+  try {
+    showNotification(`🔄 正在儲存資料 (${action})...`, 'info');
+    const response = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: {
+        'Content-Type': 'application/json', // 必須是 application/json
+      },
+      body: JSON.stringify({
+        action: action, // 告訴 Apps Script 要執行什麼動作
+        password: password,
+        data: dataToSend
+      }),
+    });
+    
+    if (!response.ok) {
+        // 雖然 Apps Script 通常會以 200 回應，但以防萬一
+        throw new Error(`網路錯誤: ${response.status} ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+
+    if (result.status === "error") {
+      throw new Error(result.message);
+    }
+    
+    showNotification('✅ 資料已成功儲存到 Google Sheets！', 'success');
+    return true;
+
+  } catch (error) {
+    console.error('儲存資料失敗:', error);
+    // 針對 CORS 錯誤提供更明確的指示
+    if (error.message.includes("Failed to fetch") || error.message.includes("CORS")) {
+        showNotification(`❌ 資料儲存失敗：連線錯誤。請檢查 1. Apps Script URL 是否正確；2. Apps Script 部署權限是否設為「任何人」。`, 'error');
+    } else {
+        showNotification(`❌ 資料儲存失敗：${error.message}`, 'error');
+    }
+    return false;
+  }
+}
+
+
+// 自動刪除過期新聞函數 (邏輯不變)
+async function autoDeleteExpiredNews() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  const originalLength = newsData.length;
+  const originalNewsData = [...newsData]; 
+  const originalHistoryData = [...historyData];
+
+  const originalNewsLength = newsData.length;
   
-  // 將要刪除的新聞加入歷史紀錄
   const expiredNews = newsData.filter(news => {
     const newsDate = new Date(news.date);
     newsDate.setHours(0, 0, 0, 0);
     return newsDate < today;
   });
   
-  // 加入歷史紀錄（避免重複）
-  expiredNews.forEach(news => {
-    const exists = historyData.some(h => h.id === news.id && h.date === news.date);
-    if (!exists) {
-      historyData.push({
-        ...news,
-        archivedDate: new Date().toISOString().split('T')[0] // 記錄歸檔日期
+  if (expiredNews.length > 0) {
+      expiredNews.forEach(news => {
+        const exists = historyData.some(h => h.id === news.id && h.date === news.date);
+        if (!exists) {
+          historyData.push({
+            ...news,
+            archivedDate: new Date().toISOString().split('T')[0]
+          });
+        }
       });
-    }
-  });
-  
-  // 保留今天及以後的新聞
-  newsData = newsData.filter(news => {
-    const newsDate = new Date(news.date);
-    newsDate.setHours(0, 0, 0, 0);
-    return newsDate >= today;
-  });
-  
-  // 如果有新聞被自動刪除，儲存資料並更新顯示
-  if (newsData.length < originalLength) {
-    saveData();
-    console.log(`自動刪除了 ${originalLength - newsData.length} 則過期新聞，已加入歷史紀錄`);
+      
+      newsData = newsData.filter(news => {
+        const newsDate = new Date(news.date);
+        newsDate.setHours(0, 0, 0, 0);
+        return newsDate >= today;
+      });
+      
+      if (newsData.length < originalNewsLength) {
+        const success = await saveData('saveNews');
+        if (success) {
+            console.log(`自動刪除了 ${originalNewsLength - newsData.length} 則過期新聞，已加入歷史紀錄`);
+        } else {
+             newsData = originalNewsData;
+             historyData = originalHistoryData;
+             console.error('自動刪除操作失敗，資料未儲存到後端。已復原前端資料。');
+        }
+      }
   }
 }
 
-// 設定自動刪除定時器
+// 設定自動刪除定時器 (邏輯不變)
 function scheduleAutoDelete() {
-  // 清除現有定時器
   if (autoDeleteTimer) {
     clearTimeout(autoDeleteTimer);
   }
@@ -359,22 +421,20 @@ function scheduleAutoDelete() {
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0); // 設定為隔日00:00
+  tomorrow.setHours(0, 0, 0, 0); 
   
   const timeUntilMidnight = tomorrow.getTime() - now.getTime();
   
-  // 設定定時器在隔日00:00執行
-  autoDeleteTimer = setTimeout(() => {
-    autoDeleteExpiredNews();
-    renderNews(); // 重新渲染頁面
-    updateAdminNewsList(); // 更新管理後台列表
+  autoDeleteTimer = setTimeout(async () => {
+    await autoDeleteExpiredNews();
+    renderNews(); 
+    updateAdminNewsList(); 
     
-    // 設定下一次自動刪除（每24小時執行一次）
-    setInterval(() => {
-      autoDeleteExpiredNews();
+    setInterval(async () => {
+      await autoDeleteExpiredNews();
       renderNews();
       updateAdminNewsList();
-    }, 24 * 60 * 60 * 1000); // 24小時
+    }, 24 * 60 * 60 * 1000); 
     
   }, timeUntilMidnight);
   
@@ -383,28 +443,21 @@ function scheduleAutoDelete() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
-  loadData();
-  renderNews();
+  loadData(); 
 });
 
-// 渲染新聞列表
+// 渲染新聞列表 (邏輯不變)
 function renderNews() {
   const container = document.getElementById('newsContainer');
   container.innerHTML = '';
   
-  // 自動刪除過期新聞（當日之前的新聞）
-  autoDeleteExpiredNews();
-  
-  // 設定定時器，在隔日00:00自動刪除過期新聞
   scheduleAutoDelete();
   
-  // 排序：今天的新聞在最上方，其餘按日期排序
   const today = new Date();
   const sortedNews = [...newsData].sort((a, b) => {
     const dateA = new Date(a.date);
     const dateB = new Date(b.date);
     
-    // 檢查是否為今天
     const isToday = (date) => {
       const checkDate = new Date(date);
       return checkDate.toDateString() === today.toDateString();
@@ -413,11 +466,9 @@ function renderNews() {
     const aIsToday = isToday(dateA);
     const bIsToday = isToday(dateB);
     
-    // 今天的新聞優先
     if (aIsToday && !bIsToday) return -1;
     if (!aIsToday && bIsToday) return 1;
     
-    // 其餘按日期排序
     return dateA - dateB;
   });
   
@@ -427,7 +478,6 @@ function renderNews() {
     const dayOfWeek = dayNames[newsDate.getDay()];
     const dateStr = `${newsDate.getMonth() + 1}/${newsDate.getDate()}`;
     
-    // 檢查是否為今天的新聞
     const isToday = newsDate.toDateString() === today.toDateString();
     
     const editor = staffData.editor.find(s => s.id === news.editor);
@@ -435,7 +485,6 @@ function renderNews() {
     const graphic = staffData.graphic.find(s => s.id === news.graphic);
     
     const card = document.createElement('section');
-    // 今天的新聞自動變成紅色重點新聞，手動設定的重點新聞為紫色
     let cardClass = 'card';
     let titleClass = '';
     
@@ -468,7 +517,7 @@ function renderNews() {
   });
 }
 
-// 登入功能
+// 登入功能 (邏輯不變)
 function showLoginModal() {
   if (isAdminMode) {
     showStaffModal();
@@ -487,7 +536,6 @@ function login() {
     closeModal('loginModal');
     document.getElementById('adminPassword').value = '';
     
-    // 創建自定義通知
     showNotification('✅ 登入成功！現在可以編輯新聞內容了。', 'success');
   } else {
     showNotification('❌ 密碼錯誤！請重新輸入。', 'error');
@@ -496,7 +544,7 @@ function login() {
   }
 }
 
-// 新聞編輯功能
+// 新聞編輯功能 (邏輯不變)
 function editNews(id) {
   if (!isAdminMode) return;
   
@@ -534,7 +582,7 @@ function addNews() {
   document.getElementById('editModal').classList.add('show');
 }
 
-function saveNews() {
+async function saveNews() {
   const date = document.getElementById('editDate').value;
   const title = document.getElementById('editNewsTitle').value.trim();
   const editor = document.getElementById('editEditor').value;
@@ -547,27 +595,31 @@ function saveNews() {
     return;
   }
   
+  const originalNewsData = [...newsData]; 
+
   if (editingId) {
-    // 編輯現有新聞
     const index = newsData.findIndex(n => n.id === editingId);
     newsData[index] = {
       id: editingId,
       date, title, editor, video, graphic, accent
     };
-    showNotification('✅ 新聞更新成功！', 'success');
   } else {
-    // 新增新聞
-    const newId = newsData.length > 0 ? Math.max(...newsData.map(n => n.id)) + 1 : 1;
+    const newId = newsData.length > 0 ? Math.max(...newsData.map(n => parseInt(n.id))) + 1 : 1;
     newsData.push({
-      id: newId,
+      id: String(newId), 
       date, title, editor, video, graphic, accent
     });
-    showNotification('✅ 新聞新增成功！', 'success');
   }
   
-  saveData();
-  renderNews();
-  closeModal('editModal');
+  const success = await saveData('saveNews');
+  
+  if (success) {
+      renderNews();
+      updateAdminNewsList();
+      closeModal('editModal');
+  } else {
+      newsData = originalNewsData;
+  }
 }
 
 function deleteNews() {
@@ -576,41 +628,48 @@ function deleteNews() {
     return;
   }
   
-  // 創建自定義確認對話框
-  showConfirmDialog('⚠️ 確定要完成這則新聞嗎？完成後會移至歷史紀錄。', () => {
+  showConfirmDialog('⚠️ 確定要完成這則新聞嗎？完成後會移至歷史紀錄。', async () => {
     const newsToDelete = newsData.find(n => n.id === editingId);
     if (newsToDelete) {
-      // 加入歷史紀錄（避免重複）
+      const originalNewsData = [...newsData]; 
+      const originalHistoryData = [...historyData];
+
       const exists = historyData.some(h => h.id === newsToDelete.id && h.date === newsToDelete.date);
       if (!exists) {
         historyData.push({
           ...newsToDelete,
-          archivedDate: new Date().toISOString().split('T')[0] // 記錄歸檔日期
+          archivedDate: new Date().toISOString().split('T')[0] 
         });
       }
       
-      // 從當前新聞中移除
       newsData = newsData.filter(n => n.id !== editingId);
       
-      saveData();
-      renderNews();
-      updateAdminNewsList(); // 更新管理後台列表
-      closeModal('editModal');
-      showNotification('✅ 新聞已完成並移至歷史紀錄！', 'success');
+      const success = await saveData('saveNews');
+      
+      if (success) {
+          renderNews();
+          updateAdminNewsList(); 
+          closeModal('editModal');
+      } else {
+          newsData = originalNewsData;
+          historyData = originalHistoryData;
+          showNotification('❌ 完成失敗：資料未儲存到後端！', 'error');
+      }
+      
     } else {
       showNotification('❌ 刪除失敗：找不到指定的新聞！', 'error');
     }
   });
 }
 
-// 人員管理功能
+// 人員管理功能 (邏輯不變)
 function showStaffModal() {
   updateStaffLists();
   updateAdminNewsList();
   document.getElementById('staffModal').classList.add('show');
 }
 
-// 更新管理後台的新聞列表
+// 更新管理後台的新聞列表 (邏輯不變)
 function updateAdminNewsList() {
   const container = document.getElementById('adminNewsList');
   container.innerHTML = '';
@@ -620,7 +679,6 @@ function updateAdminNewsList() {
     return;
   }
   
-  // 按日期排序顯示
   const sortedNews = [...newsData].sort((a, b) => new Date(a.date) - new Date(b.date));
   
   sortedNews.forEach(news => {
@@ -635,7 +693,6 @@ function updateAdminNewsList() {
     
     const newsItem = document.createElement('div');
     
-    // 決定樣式：今天的新聞為紅色，手動重點新聞為紫色
     let bgColor = '#fff';
     let borderColor = 'var(--line)';
     let titleColor = 'var(--ink)';
@@ -684,6 +741,7 @@ function updateAdminNewsList() {
   });
 }
 
+// 更新人員選單 (邏輯不變)
 function updateStaffSelects() {
   const selects = ['editEditor', 'editVideo', 'editGraphic'];
   const roles = ['editor', 'video', 'graphic'];
@@ -693,7 +751,9 @@ function updateStaffSelects() {
     const currentValue = select.value;
     select.innerHTML = `<option value="">請選擇${roles[index] === 'editor' ? '編輯' : roles[index] === 'video' ? '影片' : '平面'}人員</option>`;
     
-    staffData[roles[index]].forEach(staff => {
+    const sortedStaff = [...staffData[roles[index]]].sort((a, b) => a.name.localeCompare(b.name, 'zh-TW'));
+    
+    sortedStaff.forEach(staff => {
       const option = document.createElement('option');
       option.value = staff.id;
       option.textContent = `${staff.id}（${staff.name}）`;
@@ -704,6 +764,7 @@ function updateStaffSelects() {
   });
 }
 
+// 更新人員列表 (邏輯不變)
 function updateStaffLists() {
   const roles = ['editor', 'video', 'graphic'];
   
@@ -714,7 +775,9 @@ function updateStaffLists() {
     container.innerHTML = '';
     count.textContent = staffData[role].length;
     
-    staffData[role].forEach(staff => {
+    const sortedStaff = [...staffData[role]].sort((a, b) => a.name.localeCompare(b.name, 'zh-TW'));
+
+    sortedStaff.forEach(staff => {
       const item = document.createElement('div');
       item.className = 'staff-item';
       item.innerHTML = `
@@ -726,7 +789,8 @@ function updateStaffLists() {
   });
 }
 
-function addStaff() {
+// 新增人員 (邏輯不變，依賴 saveData 的成功執行)
+async function addStaff() {
   const id = document.getElementById('staffId').value.trim();
   const name = document.getElementById('staffName').value.trim();
   const role = document.getElementById('staffRole').value;
@@ -736,9 +800,8 @@ function addStaff() {
     return;
   }
   
-  // 檢查是否已存在
   const exists = Object.values(staffData).some(roleStaff => 
-    roleStaff.some(staff => staff.id === id)
+    roleStaff.some(staff => String(staff.id) === id) // 確保比較類型一致
   );
   
   if (exists) {
@@ -746,43 +809,55 @@ function addStaff() {
     return;
   }
   
+  const originalStaff = [...staffData[role]]; 
   staffData[role].push({id, name});
   
-  document.getElementById('staffId').value = '';
-  document.getElementById('staffName').value = '';
-  
-  updateStaffLists();
-  updateStaffSelects();
-  saveData();
-  showNotification('✅ 人員新增成功！', 'success');
+  const success = await saveData('saveStaff');
+
+  if (success) {
+      document.getElementById('staffId').value = '';
+      document.getElementById('staffName').value = '';
+      updateStaffLists();
+      updateStaffSelects();
+  } else {
+      staffData[role] = originalStaff;
+      // 由於 saveData 已經顯示了錯誤訊息，這裡不需要額外顯示
+  }
 }
 
 function removeStaff(role, id) {
-  showConfirmDialog('⚠️ 確定要移除這位人員嗎？', () => {
-    staffData[role] = staffData[role].filter(staff => staff.id !== id);
-    updateStaffLists();
-    updateStaffSelects();
-    saveData();
-    showNotification('✅ 人員已移除！', 'success');
+  showConfirmDialog('⚠️ 確定要移除這位人員嗎？', async () => {
+    const originalStaff = [...staffData[role]]; 
+    
+    staffData[role] = staffData[role].filter(staff => String(staff.id) !== id);
+    
+    const success = await saveData('saveStaff');
+
+    if (success) {
+        updateStaffLists();
+        updateStaffSelects();
+    } else {
+        staffData[role] = originalStaff;
+        updateStaffLists();
+        updateStaffSelects();
+        showNotification('❌ 移除失敗：資料未儲存到後端！', 'error');
+    }
   });
 }
 
-// Excel下載功能
+// Excel下載功能 (邏輯不變)
 function downloadHistoryExcel() {
   if (filteredHistory.length === 0) {
     showNotification('⚠️ 沒有資料可以下載！請先搜尋或確認有歷史紀錄。', 'warning');
     return;
   }
   
-  // 準備Excel資料
   const excelData = [];
   
-  // 取得搜尋條件
   const year = document.getElementById('searchYear').value;
   const month = document.getElementById('searchMonth').value;
   const keyword = document.getElementById('searchKeyword').value.trim();
   
-  // 建立檔案名稱
   let fileName = '新聞歷史紀錄';
   const currentDate = new Date().toISOString().split('T')[0];
   
@@ -794,10 +869,8 @@ function downloadHistoryExcel() {
   }
   fileName += `_${currentDate}.xlsx`;
   
-  // 按日期排序（最新的在前）
   const sortedData = [...filteredHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
   
-  // 轉換資料格式
   sortedData.forEach((news, index) => {
     const newsDate = new Date(news.date);
     const editor = staffData.editor.find(s => s.id === news.editor);
@@ -823,13 +896,9 @@ function downloadHistoryExcel() {
     });
   });
   
-  // 建立工作簿
   const wb = XLSX.utils.book_new();
-  
-  // 建立工作表
   const ws = XLSX.utils.json_to_sheet(excelData);
   
-  // 設定欄位寬度
   const colWidths = [
     { wch: 6 },   // 序號
     { wch: 12 },  // 發布日期
@@ -849,69 +918,25 @@ function downloadHistoryExcel() {
   ];
   ws['!cols'] = colWidths;
   
-  // 加入工作表到工作簿
   XLSX.utils.book_append_sheet(wb, ws, '新聞歷史紀錄');
   
-  // 如果有搜尋條件，建立摘要工作表
   if (year || month || keyword) {
     const summaryData = [];
     
-    // 搜尋條件摘要
-    summaryData.push({
-      '項目': '搜尋條件',
-      '內容': ''
-    });
+    summaryData.push({'項目': '搜尋條件', '內容': ''});
+    if (year) summaryData.push({'項目': '年份', '內容': `${year}年`});
+    if (month) summaryData.push({'項目': '月份', '內容': `${month}月`});
+    if (keyword) summaryData.push({'項目': '關鍵字', '內容': keyword});
     
-    if (year) {
-      summaryData.push({
-        '項目': '年份',
-        '內容': `${year}年`
-      });
-    }
+    summaryData.push({'項目': '搜尋結果', '內容': `共 ${filteredHistory.length} 筆新聞`});
+    summaryData.push({'項目': '下載時間', '內容': new Date().toLocaleString('zh-TW')});
     
-    if (month) {
-      summaryData.push({
-        '項目': '月份',
-        '內容': `${month}月`
-      });
-    }
+    summaryData.push({'項目': '', '內容': ''});
+    summaryData.push({'項目': '統計資料', '內容': ''});
     
-    if (keyword) {
-      summaryData.push({
-        '項目': '關鍵字',
-        '內容': keyword
-      });
-    }
-    
-    summaryData.push({
-      '項目': '搜尋結果',
-      '內容': `共 ${filteredHistory.length} 筆新聞`
-    });
-    
-    summaryData.push({
-      '項目': '下載時間',
-      '內容': new Date().toLocaleString('zh-TW')
-    });
-    
-    // 統計資料
-    summaryData.push({
-      '項目': '',
-      '內容': ''
-    });
-    
-    summaryData.push({
-      '項目': '統計資料',
-      '內容': ''
-    });
-    
-    // 重點新聞統計
     const accentCount = sortedData.filter(news => news.accent).length;
-    summaryData.push({
-      '項目': '重點新聞數量',
-      '內容': `${accentCount} 筆`
-    });
+    summaryData.push({'項目': '重點新聞數量', '內容': `${accentCount} 筆`});
     
-    // 人員統計
     const editorStats = {};
     const videoStats = {};
     const graphicStats = {};
@@ -930,67 +955,29 @@ function downloadHistoryExcel() {
       graphicStats[graphicName] = (graphicStats[graphicName] || 0) + 1;
     });
     
-    // 編輯人員統計
-    summaryData.push({
-      '項目': '',
-      '內容': ''
-    });
-    
-    summaryData.push({
-      '項目': '編輯人員統計',
-      '內容': ''
-    });
-    
+    summaryData.push({'項目': '', '內容': ''});
+    summaryData.push({'項目': '編輯人員統計', '內容': ''});
     Object.entries(editorStats).forEach(([name, count]) => {
-      summaryData.push({
-        '項目': name,
-        '內容': `${count} 篇`
-      });
+      summaryData.push({'項目': name, '內容': `${count} 篇`});
     });
     
-    // 影片人員統計
-    summaryData.push({
-      '項目': '',
-      '內容': ''
-    });
-    
-    summaryData.push({
-      '項目': '影片人員統計',
-      '內容': ''
-    });
-    
+    summaryData.push({'項目': '', '內容': ''});
+    summaryData.push({'項目': '影片人員統計', '內容': ''});
     Object.entries(videoStats).forEach(([name, count]) => {
-      summaryData.push({
-        '項目': name,
-        '內容': `${count} 篇`
-      });
+      summaryData.push({'項目': name, '內容': `${count} 篇`});
     });
     
-    // 平面人員統計
-    summaryData.push({
-      '項目': '',
-      '內容': ''
-    });
-    
-    summaryData.push({
-      '項目': '平面人員統計',
-      '內容': ''
-    });
-    
+    summaryData.push({'項目': '', '內容': ''});
+    summaryData.push({'項目': '平面人員統計', '內容': ''});
     Object.entries(graphicStats).forEach(([name, count]) => {
-      summaryData.push({
-        '項目': name,
-        '內容': `${count} 篇`
-      });
+      summaryData.push({'項目': name, '內容': `${count} 篇`});
     });
     
-    // 建立摘要工作表
     const summaryWs = XLSX.utils.json_to_sheet(summaryData);
     summaryWs['!cols'] = [{ wch: 20 }, { wch: 30 }];
     XLSX.utils.book_append_sheet(wb, summaryWs, '搜尋摘要');
   }
   
-  // 下載檔案
   try {
     XLSX.writeFile(wb, fileName);
     showNotification(`✅ Excel檔案下載成功！\n檔案名稱：${fileName}\n共 ${filteredHistory.length} 筆資料`, 'success');
@@ -1000,13 +987,19 @@ function downloadHistoryExcel() {
   }
 }
 
-// Excel匯入功能
-function importExcel(event) {
+// Excel匯入功能 (邏輯不變)
+async function importExcel(event) {
   const file = event.target.files[0];
   if (!file) return;
   
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
+    const originalStaffData = { 
+        editor: [...staffData.editor], 
+        video: [...staffData.video], 
+        graphic: [...staffData.graphic]
+    }; 
+    
     try {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, {type: 'array'});
@@ -1035,9 +1028,8 @@ function importExcel(event) {
           return;
         }
         
-        // 檢查是否已存在
         const exists = Object.values(staffData).some(roleStaff => 
-          roleStaff.some(staff => staff.id === id)
+          roleStaff.some(staff => String(staff.id) === id) // 確保比較類型一致
         );
         
         if (!exists) {
@@ -1046,29 +1038,35 @@ function importExcel(event) {
         }
       });
       
-      let message = `✅ 成功匯入 ${imported} 筆人員資料！`;
-      if (errors.length > 0) {
-        message += `\n\n⚠️ 發現 ${errors.length} 個問題：\n${errors.slice(0, 5).join('\n')}`;
-        if (errors.length > 5) {
-          message += `\n... 還有 ${errors.length - 5} 個問題`;
-        }
+      const success = await saveData('saveStaff');
+
+      if (success) {
+          let message = `✅ 成功匯入 ${imported} 筆人員資料！`;
+          if (errors.length > 0) {
+            message += `\n\n⚠️ 發現 ${errors.length} 個問題：\n${errors.slice(0, 5).join('\n')}`;
+            if (errors.length > 5) {
+              message += `\n... 還有 ${errors.length - 5} 個問題`;
+            }
+          }
+          showNotification(message, 'success');
+          updateStaffLists();
+          updateStaffSelects();
+      } else {
+          staffData = originalStaffData;
+          updateStaffLists();
+          updateStaffSelects();
       }
       
-      showNotification(message, 'success');
-      updateStaffLists();
-      updateStaffSelects();
-      saveData();
     } catch (error) {
       showNotification('❌ 檔案格式錯誤！請確認Excel檔案格式正確。\n\n建議格式：\n- 員工編號 | 姓名 | 職位\n- 職位請填寫：編輯、影片、平面', 'error');
     }
   };
   reader.readAsArrayBuffer(file);
   
-  // 清空檔案選擇
   event.target.value = '';
 }
 
-// 歷史紀錄功能
+// 歷史紀錄功能 (邏輯不變)
 function showHistoryModal() {
   updateYearOptions();
   clearSearch();
@@ -1080,13 +1078,11 @@ function updateYearOptions() {
   const currentYear = new Date().getFullYear();
   const years = new Set();
   
-  // 收集所有年份
   historyData.forEach(news => {
     const year = new Date(news.date).getFullYear();
     years.add(year);
   });
   
-  // 從2025年開始，每年自動增加到當前年份+1
   const startYear = 2025;
   const endYear = Math.max(currentYear + 1, startYear);
   for (let i = startYear; i <= endYear; i++) {
@@ -1110,17 +1106,14 @@ function searchHistory() {
   filteredHistory = historyData.filter(news => {
     const newsDate = new Date(news.date);
     
-    // 年份篩選
     if (year && newsDate.getFullYear() !== parseInt(year)) {
       return false;
     }
     
-    // 月份篩選
     if (month && (newsDate.getMonth() + 1) !== parseInt(month)) {
       return false;
     }
     
-    // 關鍵字篩選
     if (keyword && !news.title.toLowerCase().includes(keyword)) {
       return false;
     }
@@ -1130,7 +1123,6 @@ function searchHistory() {
   
   displayHistoryResults();
   
-  // 顯示搜尋結果統計
   const resultsSpan = document.getElementById('searchResults');
   if (year || month || keyword) {
     resultsSpan.textContent = `找到 ${filteredHistory.length} 筆符合條件的新聞`;
@@ -1161,7 +1153,6 @@ function displayHistoryResults() {
     return;
   }
   
-  // 按日期排序（最新的在前）
   const sortedHistory = [...filteredHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
   
   sortedHistory.forEach(news => {
@@ -1172,7 +1163,6 @@ function displayHistoryResults() {
     
     const historyItem = document.createElement('div');
     
-    // 歷史紀錄中的重點新聞顯示為紫色
     const bgColor = news.accent ? 'var(--soft-purple)' : '#fff';
     const borderColor = news.accent ? 'var(--soft-purple-line)' : 'var(--line)';
     const titleColor = news.accent ? 'var(--purple)' : 'var(--ink)';
@@ -1222,37 +1212,41 @@ function restoreNews(id, date) {
     return;
   }
   
-  showConfirmDialog('⚠️ 確定要復原這則新聞到當前新聞列表嗎？', () => {
+  showConfirmDialog('⚠️ 確定要復原這則新聞到當前新聞列表嗎？', async () => {
     const historyNews = historyData.find(h => h.id == id && h.date === date);
+    
     if (historyNews) {
-      // 檢查是否已存在於當前新聞中
       const exists = newsData.some(n => n.id == historyNews.id && n.date === historyNews.date);
       if (exists) {
         showNotification('⚠️ 該新聞已存在於當前新聞列表中！', 'warning');
         return;
       }
       
-      // 復原到當前新聞（移除歸檔日期）
+      const originalNewsData = [...newsData]; 
+      const originalHistoryData = [...historyData];
+
       const { archivedDate, ...restoredNews } = historyNews;
       newsData.push(restoredNews);
       
-      // 從歷史紀錄中移除
       historyData = historyData.filter(h => !(h.id == id && h.date === date));
-      
-      // 同時更新過濾後的歷史紀錄
       filteredHistory = filteredHistory.filter(h => !(h.id == id && h.date === date));
       
-      saveData();
-      renderNews(); // 更新主頁面
-      updateAdminNewsList(); // 更新管理後台列表
+      const success = await saveData('restoreNews');
       
-      // 立即關閉歷史紀錄視窗，回到主頁面
-      closeModal('historyModal');
-      
-      // 延遲顯示成功訊息，確保視窗已關閉
-      setTimeout(() => {
-        showNotification('✅ 新聞已復原到主頁面！', 'success');
-      }, 100);
+      if (success) {
+        renderNews(); 
+        updateAdminNewsList(); 
+        closeModal('historyModal');
+        setTimeout(() => {
+          showNotification('✅ 新聞已復原到主頁面！', 'success');
+        }, 100);
+      } else {
+         newsData = originalNewsData;
+        historyData = originalHistoryData;
+        filteredHistory = originalHistoryData.filter(h => !(h.id == id && h.date === date)); 
+        displayHistoryResults();
+        showNotification('❌ 復原失敗：資料未儲存到後端！', 'error');
+      }
     } else {
       showNotification('❌ 復原失敗：找不到指定的新聞！', 'error');
     }
@@ -1265,46 +1259,23 @@ function permanentDeleteNews(id, date) {
     return;
   }
   
-  showConfirmDialog('⚠️ 確定要永久刪除這則新聞嗎？此操作無法復原！', () => {
-    const originalLength = historyData.length;
+  showConfirmDialog('⚠️ 確定要永久刪除這則新聞嗎？此操作無法復原！', async () => {
+    const originalHistoryData = [...historyData]; 
     
-    // 從歷史紀錄中完全移除
     historyData = historyData.filter(h => !(h.id == id && h.date === date));
-    
-    // 同時更新過濾後的歷史紀錄
     filteredHistory = filteredHistory.filter(h => !(h.id == id && h.date === date));
     
-    if (historyData.length < originalLength) {
-      saveData();
-      displayHistoryResults(); // 重新顯示結果
-      showNotification('✅ 新聞已永久刪除！', 'success');
+    const success = await saveData('deleteHistory');
+
+    if (success) {
+      displayHistoryResults(); 
     } else {
-      showNotification('❌ 刪除失敗：找不到指定的新聞！', 'error');
+      historyData = originalHistoryData;
+      filteredHistory = originalHistoryData.filter(h => !(h.id == id && h.date === date)); 
+      displayHistoryResults();
+      showNotification('❌ 刪除失敗：資料未儲存到後端！', 'error');
     }
   });
-}
-
-// 資料儲存與載入
-function saveData() {
-  localStorage.setItem('newsData', JSON.stringify(newsData));
-  localStorage.setItem('staffData', JSON.stringify(staffData));
-  localStorage.setItem('historyData', JSON.stringify(historyData));
-}
-
-function loadData() {
-  const savedNews = localStorage.getItem('newsData');
-  const savedStaff = localStorage.getItem('staffData');
-  const savedHistory = localStorage.getItem('historyData');
-  
-  if (savedNews) {
-    newsData = JSON.parse(savedNews);
-  }
-  if (savedStaff) {
-    staffData = JSON.parse(savedStaff);
-  }
-  if (savedHistory) {
-    historyData = JSON.parse(savedHistory);
-  }
 }
 
 // 通用功能
@@ -1327,9 +1298,8 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// 自定義通知系統
+// 自定義通知系統 (邏輯不變)
 function showNotification(message, type = 'info') {
-  // 移除現有通知
   const existingNotification = document.querySelector('.notification');
   if (existingNotification) {
     existingNotification.remove();
@@ -1363,7 +1333,6 @@ function showNotification(message, type = 'info') {
     animation: slideIn 0.3s ease-out;
   `;
   
-  // 添加動畫樣式
   if (!document.querySelector('#notification-styles')) {
     const style = document.createElement('style');
     style.id = 'notification-styles';
@@ -1382,7 +1351,6 @@ function showNotification(message, type = 'info') {
   
   document.body.appendChild(notification);
   
-  // 3秒後自動消失
   setTimeout(() => {
     notification.style.animation = 'slideOut 0.3s ease-in';
     setTimeout(() => {
@@ -1393,9 +1361,8 @@ function showNotification(message, type = 'info') {
   }, 3000);
 }
 
-// 自定義確認對話框
+// 自定義確認對話框 (邏輯不變)
 function showConfirmDialog(message, onConfirm) {
-  // 移除現有對話框
   const existingDialog = document.querySelector('.confirm-dialog');
   if (existingDialog) {
     existingDialog.remove();
@@ -1438,7 +1405,6 @@ function showConfirmDialog(message, onConfirm) {
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
   
-  // 全域函數處理確認和取消
   window.confirmAction = function() {
     overlay.remove();
     onConfirm();
@@ -1452,7 +1418,6 @@ function showConfirmDialog(message, onConfirm) {
     delete window.cancelAction;
   };
   
-  // 點擊外部關閉
   overlay.addEventListener('click', function(e) {
     if (e.target === overlay) {
       window.cancelAction();
@@ -1460,5 +1425,5 @@ function showConfirmDialog(message, onConfirm) {
   });
 }
 </script>
- <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'993026a7b3b4f21c',t:'MTc2MTIxMTE0Ny4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
